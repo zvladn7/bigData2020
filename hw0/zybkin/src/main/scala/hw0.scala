@@ -1,16 +1,6 @@
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.IntegerType
-import org.apache.spark.sql.functions.max
-import org.apache.spark.sql.functions.corr
-import org.apache.spark.sql.functions.stddev
-import org.apache.spark.sql.functions.mean
-import org.apache.spark.sql.functions.cos
-import org.apache.spark.sql.functions.pow
-import org.apache.spark.sql.functions.avg
-import org.apache.spark.sql.functions.first
-import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.functions.udf
-
 
 object hw0 {
   def main(args: Array[String]): Unit = {
@@ -83,48 +73,48 @@ object hw0 {
       )
       .show()
 
-    val LATITUDE_5KM = 0.045
-    val bound_plus = pow($"longitude".plus(cos($"latitude").multiply(40000).divide(360)), -1).multiply(5)
-    val bound_minus = pow($"longitude".minus(cos($"latitude").multiply(40000).divide(360)), -1).multiply(5)
-    val cond1 = $"x".between($"latitude", $"latitude".plus(LATITUDE_5KM))
-      .and($"y".between($"longitude", bound_plus))
-    val cond2 = $"x".between($"latitude", $"latitude".minus(LATITUDE_5KM))
-      .and($"y".between($"longitude", bound_plus))
 
-    val cond3 = $"x".between($"latitude", $"latitude".plus(LATITUDE_5KM))
-      .and($"y".between($"longitude", bound_minus))
-    val cond4 = $"x".between($"latitude", $"latitude".minus(LATITUDE_5KM))
-      .and($"y".between($"longitude", bound_minus))
+    val encode = (lat: Double, lng: Double, precision: Int) => {
 
+      val base32 = "0123456789bcdefghjkmnpqrstuvwxyz"
 
-    val data = df.select($"price", $"latitude".alias("x"), $"longitude".alias("y"))
-    val data2 = df.select($"id", $"latitude", $"longitude").sort($"latitude", $"longitude")
-    data2.join(data, cond1)
-      .groupBy($"id", $"latitude", $"longitude")
-      .agg(avg($"price").alias("average_price"))
-      .sort($"average_price".desc)
-      .limit(1)
-      .show()
+      var (minLat, maxLat) = (-90.0, 90.0)
+      var (minLng, maxLng) = (-180.0, 180.0)
+      val bits = List(16, 8, 4, 2, 1)
 
-    data2.join(data, cond2)
-      .groupBy($"id", $"latitude", $"longitude")
-      .agg(avg($"price").alias("average_price"))
-      .sort($"average_price".desc)
-      .limit(1)
-      .show()
+      (0 until precision).map { p => {
+        base32 apply (0 until 5).map { i => {
+          if (((5 * p) + i) % 2 == 0) {
+            val mid = (minLng + maxLng) / 2.0
+            if (lng > mid) {
+              minLng = mid
+              bits(i)
+            } else {
+              maxLng = mid
+              0
+            }
+          } else {
+            val mid = (minLat + maxLat) / 2.0
+            if (lat > mid) {
+              minLat = mid
+              bits(i)
+            } else {
+              maxLat = mid
+              0
+            }
+          }
+        }
+        }.reduceLeft((a, b) => a | b)
+      }
+      }.mkString("")
+    }
 
-    data2.join(data, cond3)
-      .groupBy($"id", $"latitude", $"longitude")
-      .agg(avg($"price").alias("average_price"))
-      .sort($"average_price".desc)
-      .limit(1)
-      .show()
+    val geohash_udf = udf(encode)
+    df.select($"price", geohash_udf($"latitude", $"longitude", lit(5)).alias("geohash"))
+      .groupBy($"geohash")
+      .mean("price")
+      .sort($"avg(price)".desc)
+      .show(1)
 
-    data2.join(data, cond4)
-      .groupBy($"id", $"latitude", $"longitude")
-      .agg(avg($"price").alias("average_price"))
-      .sort($"average_price".desc)
-      .limit(1)
-      .show()
   }
 }
